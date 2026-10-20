@@ -3,3 +3,150 @@
 @media(max-width:1050px){.shell{grid-template-columns:210px minmax(0,1fr)}.main{padding:35px 24px 100px}.two-col{grid-template-columns:1fr 1fr}.three-col{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:740px){body{font-size:14px}.shell{display:block}.sidebar{display:none}.main{padding:26px 16px 105px}.header{margin-bottom:23px;display:block}.header-actions{margin-top:11px}.panel{padding:18px;border-radius:15px}.hero{padding:22px}.hero:after{font-size:105px;right:10px;top:0}.hero h2{font-size:21px;max-width:85%}.two-col,.three-col,.grid-fields{grid-template-columns:1fr}.mobile-nav{position:fixed;bottom:0;left:0;right:0;padding:9px 8px calc(9px + env(safe-area-inset-bottom));background:#fffefa;box-shadow:0 -7px 28px #0000000d;border-top:1px solid var(--line);display:flex;justify-content:space-around;z-index:50}.mobile-nav button{display:grid;justify-items:center;gap:2px;background:transparent;border:0;color:#7c877e;font-size:10px;font-weight:700;min-width:50px}.mobile-nav button span{font-size:21px}.mobile-nav button.active{color:var(--green)}.header h1{font-size:30px}.list-card{align-items:start}.period-nav{align-items:flex-start;flex-direction:column}.modal{padding:20px}.auth-card{padding:25px}.table-scroll{margin-left:-5px;margin-right:-5px}.footer-note{margin-bottom:30px}}
 @media(prefers-reduced-motion:no-preference){.button,.nav-button{transition:background .16s,border-color .16s}}
+/* Обновление 3: проекты, уроки IELTS, спокойные списки и мобильная навигация */
+.english-task{padding:17px 0;border-bottom:1px solid var(--line)}
+.english-task:last-child{border-bottom:0}
+.english-task h3{font-size:15px;line-height:1.45}
+.english-task .row-actions{gap:7px}
+.english-task input[type=checkbox]{width:20px;height:20px;accent-color:#628e74;flex:0 0 auto}
+.english-task a.button{font-size:12px}
+@media(max-width:740px){
+  .mobile-nav{justify-content:flex-start;gap:10px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+  .mobile-nav button{flex:0 0 64px;min-width:64px}
+  .main{padding-bottom:130px}
+  .english-task .row-actions{flex-wrap:wrap}
+  .english-task h3{max-width:100%;overflow-wrap:anywhere}
+}
+
+/* Версия 3.2. Палитра взята непосредственно из lesbian-paradise-3.css.
+   Исходные токены: pink #df4f8f, lime #d9e75b, ink #071a3b,
+   paper #f7f3ea, white #fffdf8. Тема меняет только представление. */
+:root {
+  --bg:#f7f3ea;
+  --paper:#fffdf8;
+  --ink:#071a3b;
+  --muted:#526177;
+  --line:#d7d9d2;
+  --green:#b62f6b; /* тематический акцент в старых стилях */
+  --pale:#fbe5ee;
+  --peach:#fae7e2;
+  --blue:#e9eef3;
+  --lilac:#f5e1e9;
+  --danger:#a8314e;
+  --shadow:0 12px 30px rgba(7,26,59,.055);
+  --lp-pink:#df4f8f;
+  --lp-pink-dark:#b62f6b;
+  --lp-lime:#d9e75b;
+  --lp-ink:#071a3b;
+  --lp-paper:#f7f3ea;
+  --lp-white:#fffdf8;
+}
+body {
+  color:var(--lp-ink);
+  background:
+    radial-gradient(circle at 90% 5%,rgba(223,79,143,.075),transparent 26rem),
+    radial-gradient(circle at 5% 42%,rgba(217,231,91,.12),transparent 24rem),
+    var(--lp-paper);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+}
+h1,h2 {font-family:Georgia,'Times New Roman',serif;font-weight:700;letter-spacing:-.035em;}
+h1 {font-size:clamp(30px,3.7vw,43px);line-height:1.16;}
+h2 {font-size:26px;line-height:1.17;}
+h3 {font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;}
+a {color:var(--lp-pink-dark);text-underline-offset:3px;}
+a:hover {color:#8e1f50;}
+.eyebrow {color:var(--lp-pink-dark);letter-spacing:.135em;}
+.sidebar {background:var(--lp-white);border-right:1px solid #d8d9d1;box-shadow:5px 0 18px rgba(7,26,59,.025);}
+.brand-title {font-family:Georgia,'Times New Roman',serif;font-size:16px;letter-spacing:-.025em;color:var(--lp-ink);}
+.brand-sub {color:var(--muted);}
+.logo {background:var(--lp-lime);color:var(--lp-ink);border:1px solid #c4d345;border-radius:13px;box-shadow:none;}
+.nav-button {color:#46546a;}
+.nav-button:hover {color:var(--lp-ink);background:#fbe9ef;}
+.nav-button.active {color:var(--lp-ink);background:#f8dce8;box-shadow:inset 3px 0 0 var(--lp-pink);}
+.nav-icon {color:var(--lp-pink-dark);}
+.header h1 {color:var(--lp-ink);}
+.header {margin-bottom:30px;}
+.main {max-width:1210px;}
+.panel {background:var(--lp-white);border:1px solid #dcdcd3;border-radius:18px;box-shadow:var(--shadow);}
+.panel.tinted {background:#f9e5ec;border-color:#efcddc;}
+.panel.peach {background:#fbece5;border-color:#ead8cc;}
+.panel.lilac {background:#f5e6ef;border-color:#ebd3e1;}
+.hero {
+  color:var(--lp-white);
+  background:var(--lp-ink);
+  border-color:var(--lp-ink);
+  border-radius:26px;
+  box-shadow:11px 11px 0 rgba(223,79,143,.68);
+}
+.hero h2 {color:var(--lp-white);}
+.hero p,.hero .muted,.hero .subtle {color:rgba(255,253,248,.82);}
+.hero .eyebrow {color:var(--lp-lime);}
+.hero:after {content:'✳';font-family:Georgia,serif;font-size:156px;color:var(--lp-pink);opacity:.45;transform:rotate(-12deg);right:12px;top:-24px;}
+.hero .pill {color:var(--lp-ink);background:var(--lp-lime);}
+.pill {background:#fae3ec;color:#982a5d;}
+.pill.peach {background:#f9e1d7;color:#835043;}
+.pill.blue {background:#e8eef2;color:#3b536b;}
+.pill.gray {background:#f0efe6;color:#566275;}
+.pill.lilac {background:#f4e0eb;color:#713b65;}
+.pill.warn {background:var(--lp-lime);color:var(--lp-ink);}
+.info-row .bullet {background:var(--lp-pink);border-radius:50%;}
+.button {background:var(--lp-white);color:var(--lp-ink);border:1px solid #bdc4c1;border-radius:12px;}
+.button:hover {background:#f6e6ed;border-color:var(--lp-pink-dark);}
+.button.primary {
+  color:var(--lp-white);
+  background:var(--lp-ink);
+  border-color:var(--lp-ink);
+  box-shadow:0 5px 13px rgba(7,26,59,.10);
+}
+.button.primary:hover {color:var(--lp-ink);background:var(--lp-lime);border-color:var(--lp-lime);}
+.button.ghost {background:#f9e6ed;color:#9f295e;border-color:#f0cfdd;}
+.button.danger {color:var(--danger);border-color:#e5bec9;}
+.button:focus-visible,.nav-button:focus-visible,.segment button:focus-visible,.mobile-nav button:focus-visible {
+  outline:3px solid var(--lp-pink);outline-offset:3px;
+}
+.input,.select,.textarea {color:var(--lp-ink);background:#fffefa;border:1px solid #cbd0cc;}
+.input:focus,.select:focus,.textarea:focus {border-color:var(--lp-pink);box-shadow:0 0 0 3px rgba(223,79,143,.16);outline:none;}
+.field-label {color:#344761;}
+.task-check {border-bottom-color:#e7e5dd;}
+.task-check input[type=checkbox] {border-color:#b8859b;}
+.task-check input[type=checkbox]:checked {background:var(--lp-pink);border-color:var(--lp-pink);}
+.english-task input[type=checkbox] {accent-color:var(--lp-pink);}
+.done {color:#757e87;}
+.segment {background:#efece3;}
+.segment button {color:#566376;}
+.segment button.active {background:var(--lp-white);color:var(--lp-ink);box-shadow:0 2px 8px rgba(7,26,59,.10);}
+.bar {background:#e9e5da;}
+.bar-inner {background:var(--lp-pink);}
+.goal-card h3 {color:var(--lp-ink);}
+.kpi-value,.quarter-label {color:var(--lp-ink);}
+.money-table th {background:#f6e5e9;color:#263a56;}
+.money-table .negative {color:#a52b48;}
+.money-table .positive {color:#306045;}
+.notice {color:#4b4c33;background:#f2f5cf;border:1px solid #dbe4a7;}
+.empty {background:#fcfaf3;border:1px dashed #cbd1ca;}
+.empty-icon {background:var(--lp-lime);}
+.modal-close {background:#f6e4eb;color:var(--lp-ink);}
+.filter-row .button.active {background:#f8dce8;border-color:var(--lp-pink);color:var(--lp-ink);}
+.auth-screen {
+  background:
+  radial-gradient(circle at 12% 18%,rgba(223,79,143,.15),transparent 34%),
+  radial-gradient(circle at 88% 82%,rgba(217,231,91,.22),transparent 35%),
+  var(--lp-paper);
+}
+.auth-card {background:var(--lp-white);border-color:#d7d9ce;box-shadow:0 24px 70px rgba(7,26,59,.10);}
+.auth-card h1 {font-family:Georgia,'Times New Roman',serif;color:var(--lp-ink);}
+.auth-switch {color:var(--lp-pink-dark);}
+.callout {background:#f7e1ea;border-color:var(--lp-pink);}
+.toast {background:var(--lp-ink);color:var(--lp-white);}
+.mobile-nav {background:var(--lp-white);border-top-color:#d5d8cd;}
+.mobile-nav button {color:#5b687b;}
+.mobile-nav button.active {color:var(--lp-pink-dark);}
+.sync-dot {background:#6e9d5a;}
+.sync-dot.off {background:#b58a54;}
+.sync-dot.bad {background:#a93a50;}
+::selection {background:#f3b0ce;color:var(--lp-ink);}
+@media(max-width:740px) {
+  .hero {border-radius:20px;box-shadow:6px 6px 0 rgba(223,79,143,.62);}
+  .hero:after {font-size:108px;right:0;top:-14px;}
+  .mobile-nav {box-shadow:0 -6px 20px rgba(7,26,59,.07);}
+}

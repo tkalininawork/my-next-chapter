@@ -5,19 +5,19 @@
   const root = document.getElementById('app');
   const CFG = window.NEXT_CHAPTER_CONFIG || {};
   const HAS_CLOUD = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
-  const LOCAL_KEY = 'my-next-chapter-local-v1';
-  const sections = [{id:'today',icon:'☀',title:'Сегодня'},{id:'weeks',icon:'▦',title:'Неделя'},{id:'strategy',icon:'◇',title:'Стратегия'},{id:'tasks',icon:'✓',title:'Шаги'},{id:'finances',icon:'€',title:'Деньги'},{id:'review',icon:'◴',title:'Итоги'}];
+  const LOCAL_KEY = 'my-next-chapter-local-v1'; // НЕ менять: иначе локальные данные останутся в прежнем ключе
+  const sections = [{id:'today',icon:'☀',title:'Сегодня'},{id:'weeks',icon:'▦',title:'Неделя'},{id:'strategy',icon:'◇',title:'Стратегия'},{id:'tasks',icon:'✓',title:'Шаги'},{id:'finances',icon:'€',title:'Деньги'},{id:'review',icon:'◴',title:'Ретроспектива'},{id:'projects',icon:'▤',title:'Проекты'},{id:'english',icon:'A',title:'IELTS'}];
   const today = () => {const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
-  const blank = () => ({schemaVersion:1,goals:[],groups:[],quarters:[],weeks:[],tasks:[],finances:[],daily:{},reviews:{},plannedDays:{},transactions:[]});
+  const blank = () => ({schemaVersion:1,goals:[],groups:[],quarters:[],weeks:[],tasks:[],finances:[],daily:{},reviews:{},plannedDays:{},transactions:[],projects:[]});
   const getLocal = () => {try {let x=JSON.parse(localStorage.getItem(LOCAL_KEY));return normalize(x)}catch{return blank()}};
   const normalize = x => {
     const z = x && typeof x==='object' && !Array.isArray(x) ? x : {};
-    return {...blank(), ...z, goals:Array.isArray(z.goals)?z.goals:[],groups:Array.isArray(z.groups)?z.groups:[],quarters:Array.isArray(z.quarters)?z.quarters:[],weeks:Array.isArray(z.weeks)?z.weeks:[],tasks:Array.isArray(z.tasks)?z.tasks:[],finances:Array.isArray(z.finances)?z.finances:[],daily:z.daily&&typeof z.daily==='object'?z.daily:{},reviews:z.reviews&&typeof z.reviews==='object'?z.reviews:{},plannedDays:z.plannedDays&&typeof z.plannedDays==='object'?z.plannedDays:{},transactions:Array.isArray(z.transactions)?z.transactions:[]};
+    return {...blank(), ...z, goals:Array.isArray(z.goals)?z.goals:[],groups:Array.isArray(z.groups)?z.groups:[],quarters:Array.isArray(z.quarters)?z.quarters:[],weeks:Array.isArray(z.weeks)?z.weeks:[],tasks:Array.isArray(z.tasks)?z.tasks:[],finances:Array.isArray(z.finances)?z.finances:[],daily:z.daily&&typeof z.daily==='object'?z.daily:{},reviews:z.reviews&&typeof z.reviews==='object'?z.reviews:{},plannedDays:z.plannedDays&&typeof z.plannedDays==='object'?z.plannedDays:{},transactions:Array.isArray(z.transactions)?z.transactions:[],projects:Array.isArray(z.projects)?z.projects:[]};
   };
   let data = HAS_CLOUD ? blank() : getLocal();
   let api=null, session=null, revision=0, mode=HAS_CLOUD?'loading':'local', view='today', currentWeek=-1;
   let pendingPatch=null, voiceDraft='', voiceRecognition=null;
-  let modal=null, taskFilter='Все', goalFilter='Все', authMode='login', syncState=HAS_CLOUD?'Подключение…':'Только на этом устройстве';
+  let modal=null, taskFilter='Все', goalFilter='Все', projectFilter='Все', selectedReviewMonth=today().slice(0,7), authMode='login', syncState=HAS_CLOUD?'Подключение…':'Только на этом устройстве';
   let saveTimer=null, isSaving=false, localChanges=0, dirty=false, conflict=false, toastTimer=null, listening=null;
   const $ = id => document.getElementById(id);
   const h = v => String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -48,21 +48,47 @@
   function exportData(){saveFile('moya-strategiya-backup-'+today()+'.json',JSON.stringify(data,null,2),'application/json;charset=utf-8');notify('Резервная копия скачана')}
   const validISO = x => /^\d{4}-\d{2}-\d{2}$/.test(String(x||'')) && !Number.isNaN(Date.parse(x+'T12:00:00'));
   const guid = prefix => prefix+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7);
-  const suggestedFor = date => {
+  // Рекомендации всегда строятся из актуальных задач. Прежние заранее расписанные
+  // подсказки остаются дополнительными, а отметки реальных задач едины по всему сайту.
+  const activeTask = t => t && !['Готово','Пауза','Жду ответа','Входящие'].includes(t.status);
+  const isEnglishTask = t => t && (Number(t.goalId)===3 || /IELTS|English/i.test(t.title||''));
+  function taskMinutes(t){const b=Number(t.blocks);return Number.isFinite(b)&&b>0?Math.min(600,b*30):30}
+  function suggestedFor(date){
+    const d=data.daily[date]||{},energy=d.energy||'обычно';
+    const limit=energy==='мало'?1:energy==='много'?3:2;
+    const budget=energy==='мало'?35:energy==='много'?170:100;
+    let left=budget;
+    const tasks=data.tasks.filter(t=>activeTask(t)&&t.due&&t.due<=date)
+      .sort((a,b)=>a.due.localeCompare(b.due)||Number(b.goalId===2)-Number(a.goalId===2));
+    const soon=data.tasks.filter(t=>activeTask(t)&&(!t.due||t.due>date))
+      .sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
+    const chosen=[];
+    for(const t of [...tasks,...soon]){
+      if(chosen.length>=limit)break;
+      if(energy==='мало'&&t.energy==='Высокая')continue;
+      const duration=taskMinutes(t);
+      if(chosen.length&&duration>left)continue;
+      chosen.push({id:'task-'+t.id,kind:'task',taskId:t.id,text:t.nextStep||t.title,minutes:duration,optional:true,explain:t.due&&t.due<date?'Ранее запланированный срок':t.due===date?'Срок сегодня':isEnglishTask(t)?'Занятие английским':'Ближайший шаг из твоего плана'});
+      left-=duration;
+    }
     const seeded=Array.isArray(data.plannedDays?.[date])?data.plannedDays[date]:[];
-    if(seeded.length) return seeded;
-    const weekday=dateLocal(date).getDay();
-    if(weekday===0 || weekday===6) return [{id:'rest-'+date,text:'Сохранить время для отдыха. Никакого обязательного догоняния задач.',kind:'care',minutes:0,optional:true}];
-    const candidates=data.tasks.filter(t=>!taskCompleted(t)&&t.due&&t.due>=date).sort((a,b)=>a.due.localeCompare(b.due));
-    if(candidates.length) return [{id:'next-'+date,text:'Следующий небольшой шаг: '+candidates[0].title,kind:'task',taskId:candidates[0].id,minutes:30,optional:true}];
-    const w=data.weeks.find(w=>w.start<=date&&w.end>=date);
-    return [{id:'review-'+date,text:w?.focus?'Сделать один 25-минутный шаг к результату недели: '+w.focus:'Посмотреть актуальные результаты квартала и выбрать один следующий шаг',minutes:25,kind:'review',optional:true}];
-  };
-  function renderPlannedToday(){const k=today(),suggested=suggestedFor(k),d=day();if(!suggested.length)return '';
-    let html=`<section class="panel" style="margin-bottom:17px"><div class="card-title"><div><h2>Предложенный план на сегодня</h2><p>Уже заполнен. Это ориентиры, которые можно пропустить или пересмотреть.</p></div><span class="pill lilac">${suggested.length} пункта</span></div>`;
-    for(const item of suggested){const checked=(d.completedSuggestions||[]).includes(item.id);html+=`<div class="task-check"><input type="checkbox" data-action="check-suggestion" data-id="${attr(item.id)}" ${checked?'checked':''} aria-label="Отметить небольшое действие"><div style="flex:1"><div class="task-title ${checked?'done':''}">${h(item.text)}</div><div class="task-meta">${item.minutes?item.minutes+' мин · ':''}${item.optional?'рекомендация, можно пропустить':'ориентир'}</div></div>${item.taskId?`<button class="button sm ghost" data-action="edit-task" data-id="${attr(item.taskId)}">Задача ↗</button>`:''}</div>`;}
-    html+=`<p class="sheet-callout">Предложения составлены заранее по твоим ближайшим решениям и срокам. Они не знают о новых встречах или обстоятельствах, пока ты не изменишь план.</p><button class="button sm" data-action="quick-capture">🎙 Надиктовать или записать новое</button></section>`;
-    return html;
+    // Не дублируем заранее подготовленный шаг, если уже есть актуальная задача.
+    const extras=seeded.filter(x=>!chosen.some(y=>y.text.toLowerCase().includes(String(x.text||'').toLowerCase().slice(0,25))));
+    if(chosen.length) return [...chosen,...extras.slice(0,energy==='мало'?0:1)];
+    if(extras.length) return extras.slice(0,1);
+    return [{id:'review-'+date,kind:'review',text:'Выбрать один посильный следующий шаг или спокойно отдохнуть',minutes:10,optional:true}];
+  }
+  function renderPlannedToday(){
+    const k=today(),d=day(),items=suggestedFor(k);
+    let out=`<section class="panel" style="margin-bottom:17px"><div class="card-title"><div><h2>Предложение на сегодня</h2><p>Из твоих актуальных задач и доступных сил. Это можно менять.</p></div><span class="pill lilac">${d.energy||'обычно'}</span></div>`;
+    const oldCompleted=d.completedSuggestions||[];
+    for(const x of items){
+      const real=x.taskId?data.tasks.find(t=>t.id===x.taskId):null;
+      const checked=real?taskCompleted(real):oldCompleted.includes(x.id);
+      out+=`<div class="task-check"><input type="checkbox" data-action="${real?'check-task':'check-suggestion'}" data-id="${attr(real?.id||x.id)}" ${checked?'checked':''} aria-label="Отметить"><div style="flex:1"><div class="task-title ${checked?'done':''}">${h(real?.title||x.text)}</div>${real?.nextStep?`<div class="small muted" style="margin:5px 0">Начать с: ${h(real.nextStep)}</div>`:''}<div class="task-meta">${x.minutes?x.minutes+' мин · ':''}${h(x.explain||'Необязательный ориентир')}</div></div>${real?`<button class="button sm ghost" data-action="stuck-task" data-id="${attr(real.id)}">Я застряла</button>`:''}</div>`;
+    }
+    out+=`<div class="row-actions" style="margin-top:13px"><button class="button sm" data-action="capture-inbox">+ Быстро записать</button><button class="button sm" data-action="tab" data-id="english">Мой английский ↗</button></div><p class="sheet-callout">Сроки и подсказки можно переносить без «долгов по продуктивности». Уже выполненная задача отмечается во всех разделах.</p></section>`;
+    return out;
   }
   function parseVoiceMoney(text){const m=String(text||'').match(/(?:^|\s)([0-9][0-9\s]*(?:[,.][0-9]{1,2})?)\s*(€|евро|eur|лари|gel|₾|рублей|рубля|руб|₽|rub)(?=\s|$|[,.!?])/i);
     if(!m)return null;return {amount:Number(m[1].replace(/\s+/g,'').replace(',','.')),currency:/лари|gel|₾/i.test(m[2])?'GEL':/руб|rub|₽/i.test(m[2])?'RUB':'EUR'};
@@ -83,9 +109,9 @@
     }return val;
   }
   function applyPatch(v){for(const c of v.changes){
-    if(c.op==='add_task')data.tasks.push({id:guid('T'),goalId:Number(c.goalId),category:byGoal(c.goalId)?.category||'',title:String(c.title).trim(),due:c.due||'',status:'Следующий шаг',notes:String(c.notes||'').slice(0,3000),source:'Обсуждение в ChatGPT'});
+    if(c.op==='add_task'){if(data.tasks.some(t=>t.title===String(c.title).trim()&&t.due===(c.due||'')&&Number(t.goalId)===Number(c.goalId)))continue;data.tasks.push({id:guid('T'),goalId:Number(c.goalId),category:byGoal(c.goalId)?.category||'',title:String(c.title).trim(),due:c.due||'',status:'Следующий шаг',notes:String(c.notes||'').slice(0,3000),source:'Обсуждение в ChatGPT'});}
     if(c.op==='add_expense')data.transactions.push({id:guid('X'),date:c.date,amount:Number(c.amount),currency:c.currency,category:String(c.category||'Другое').slice(0,120),note:String(c.note||'').slice(0,300),source:'Пакет из ChatGPT'});
-    if(c.op==='update_task'){let t=data.tasks.find(t=>t.id===c.id);t.status=c.status;if(c.due)t.due=c.due;}
+    if(c.op==='update_task'){let t=data.tasks.find(t=>t.id===c.id);t.status=c.status;if(c.status==='Готово'&&!t.completedAt)t.completedAt=today();if(c.status!=='Готово')t.completedAt='';if(c.due)t.due=c.due;}
   }}
 
   function scheduleAll(){render()}
@@ -95,9 +121,9 @@
   function shell(){let s=`<div class="shell"><aside class="sidebar"><div class="brand"><div class="logo">∿</div><div><div class="brand-title">моя следующая<br>глава</div><div class="brand-sub">личная стратегия</div></div></div><div class="nav">`;
     for(const p of sections)s+=`<button type="button" class="nav-button ${view===p.id?'active':''}" data-action="tab" data-id="${p.id}"><span class="nav-icon">${p.icon}</span>${p.title}</button>`;
     s+=`<button type="button" class="nav-button ${view==='settings'?'active':''}" data-action="tab" data-id="settings"><span class="nav-icon">⚙</span>Настройки</button></div><div class="side-footer"><div class="small"><span data-sync-dot class="sync-dot ${statusClass()}"></span><span data-sync-label>${h(syncState)}</span></div><div class="tiny muted">Двигаться в своём темпе.<br>План можно менять.</div></div></aside><main class="main">`;
-    s+=({today:renderToday,weeks:renderWeeks,strategy:renderStrategy,tasks:renderTasks,finances:renderFinances,review:renderReview,settings:renderSettings})[view]();
+    s+=({today:renderToday,weeks:renderWeeks,strategy:renderStrategy,tasks:renderTasks,finances:renderFinances,review:renderReview,projects:renderProjects,english:renderEnglish,settings:renderSettings})[view]();
     s+=`<p class="footer-note">Здесь нет серии без пропусков. Одна сложная неделя не отменяет твою стратегию.</p></main><nav class="mobile-nav">`;
-    for(const p of [{id:'today',icon:'☀',title:'Сегодня'},{id:'weeks',icon:'▦',title:'Неделя'},{id:'strategy',icon:'◇',title:'Курс'},{id:'tasks',icon:'✓',title:'Шаги'},{id:'finances',icon:'€',title:'Деньги'},{id:'review',icon:'◴',title:'Итоги'}])s+=`<button data-action="tab" data-id="${p.id}" class="${view===p.id?'active':''}"><span>${p.icon}</span>${p.title}</button>`;
+    for(const p of [...sections,{id:'settings',icon:'⚙',title:'Настройки'}])s+=`<button data-action="tab" data-id="${p.id}" class="${view===p.id?'active':''}"><span>${p.icon}</span>${p.title}</button>`;
     s+='</nav></div>';return s;
   }
   function importPrompt(){return `<div class="empty big"><div class="empty-icon">✧</div><h3>Твоя стратегия готова к переносу</h3><p>Загрузи файл <b>moia_strategia_2026-2027.json</b> из папки «private-import». Девять долгосрочных ориентиров, годовые результаты, 52 недели и 28 шагов появятся здесь автоматически.</p><div class="row-actions"><button class="button primary" data-action="trigger-import">Импортировать стратегию</button><button class="button" data-action="tab" data-id="settings">Как сохраняются данные</button></div></div>`}
@@ -107,7 +133,7 @@
     if(!data.goals.length)return out+importPrompt();
     out+=`<section class="panel hero" style="margin-bottom:17px"><div class="eyebrow">ФОКУС НЕДЕЛИ · ${w?niceShort(w.start)+' – '+niceShort(w.end):'нет недели'}</div><h2>${h(w?.focus||'Выбери, что должно измениться на этой неделе')}</h2><p class="muted">${h(w?.second?'Дополнительно: '+w.second:'Лучше один настоящий результат, чем десять пунктов в списке.')}</p><div style="margin-top:17px">${button('tab','Открыть неделю  ↗','sm')}</div></section>`;
     out+=renderPlannedToday();
-    out+=`<div class="two-col"><div class="stack"><section class="panel"><div class="card-title"><div><h2>План на сегодня</h2><p>Коротко, без обязательства заполнить всё.</p></div><button class="button sm" data-action="quick-capture">🎙 Сказать / написать</button></div><div class="field"><label class="field-label">Самое важное действие</label><textarea class="textarea compact" data-bind="daily:main" placeholder="Что сегодня реально сдвинет дело?">${h(d.main)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если сил мало, достаточно...</label><textarea class="textarea compact" data-bind="daily:fallback" placeholder="Самый маленький полезный шаг">${h(d.fallback)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если останутся силы</label><textarea class="textarea compact" data-bind="daily:extra" placeholder="Необязательное действие">${h(d.extra)}</textarea></div></section>`;
+    out+=`<div class="two-col"><div class="stack"><section class="panel"><div class="card-title"><div><h2>Мой план</h2><p>Не обязательно заполнять все поля.</p></div><button class="button sm" data-action="quick-capture">🎙 Сказать / написать</button></div><div class="field"><label class="field-label">Самое важное действие</label><textarea class="textarea compact" data-bind="daily:main" placeholder="Что сегодня реально сдвинет дело?">${h(d.main)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если сил мало, достаточно...</label><textarea class="textarea compact" data-bind="daily:fallback" placeholder="Самый маленький полезный шаг">${h(d.fallback)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если останутся силы</label><textarea class="textarea compact" data-bind="daily:extra" placeholder="Необязательное действие">${h(d.extra)}</textarea></div></section>`;
     out+=`<section class="panel"><div class="card-title"><div><h3>Шаги, которые я выбрала на сегодня</h3><p>Список связан с твоими девятью результатами.</p></div></div>`;
     if(!tasklist.length)out+=`<p class="muted small" style="margin-bottom:12px">Здесь пока пусто. Добавь одну задачу из плана.</p>`;
     for(const t of tasklist)out+=`<div class="task-check"><input aria-label="Отметить готовым" type="checkbox" data-action="check-task" data-id="${attr(t.id)}" ${taskCompleted(t)?'checked':''}><div style="flex:1"><div class="task-title ${taskCompleted(t)?'done':''}">${h(t.title)}</div><div class="task-meta">${h(t.category)}${t.due?' · до '+niceShort(t.due):''}</div></div><button class="button ghost sm" data-action="remove-today-task" data-id="${attr(t.id)}" title="Убрать из сегодняшнего списка">×</button></div>`;
@@ -141,11 +167,11 @@
     for(const q of qq)out+=`<div class="quarter-card"><div class="quarter-label">${h(q.category)}</div><div><p class="strong">${h(q.outcome)}</p><p class="small muted" style="margin:7px 0">Проверка: ${h(q.evidence)}</p><div class="grid-fields" style="margin-top:10px"><div class="field"><label class="field-label">Состояние</label><select class="select" data-bind="quarter:${attr(q.id)}:status">${['План','В работе','Готово','Пересмотреть','Пауза'].map(s=>`<option ${q.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label class="field-label">Что изменилось / что мешает</label><input class="input" data-bind="quarter:${attr(q.id)}:notes" value="${attr(q.notes)}" placeholder="Необязательно"></div></div></div></div>`;
     out+='</section>';return out;
   }
-  function renderTasks(){let all=data.tasks.filter(t=>(taskFilter==='Все'||t.status===taskFilter)&&(goalFilter==='Все'||Number(t.goalId)===Number(goalFilter))),byStatus=data.tasks.filter(taskCompleted).length;
+  function renderTasks(){let all=data.tasks.filter(t=>(taskFilter==='Все'||t.status===taskFilter)&&(goalFilter==='Все'||Number(t.goalId)===Number(goalFilter))&&(projectFilter==='Все'||(projectFilter==='_english'?isEnglishTask(t):t.projectId===projectFilter))),byStatus=data.tasks.filter(taskCompleted).length;
     let out=contentHeader('Мои шаги','Здесь конкретные действия. Их можно менять, откладывать, удалять и добавлять по мере появления новой информации.');
-    out+=`<div class="panel" style="margin-bottom:16px"><div class="card-title"><div><h2>${byStatus} <span class="muted small">из ${data.tasks.length} выполнено</span></h2><p>Это ориентир для обзора, а не оценка твоей продуктивности.</p></div><button class="button primary" data-action="new-task">+ Новый шаг</button></div><div class="filter-row">${['Все','Следующий шаг','В работе','Готово','Пауза'].map(s=>`<button class="button sm ${taskFilter===s?'active':''}" data-action="task-filter" data-id="${attr(s)}">${s}</button>`).join('')}</div><div class="field"><label class="field-label">Показать шаги по цели</label><select class="select" data-bind="task-filter-goal"><option value="Все">Все девять результатов</option>${data.goals.map(g=>`<option value="${g.id}" ${Number(goalFilter)===Number(g.id)&&goalFilter!=='Все'?'selected':''}>${h(g.id)}. ${h(first(g.vision,72))}</option>`).join('')}</select></div></div>`;
+    out+=`<div class="panel" style="margin-bottom:16px"><div class="card-title"><div><h2>${byStatus} <span class="muted small">из ${data.tasks.length} выполнено</span></h2><p>Это ориентир для обзора, а не оценка твоей продуктивности.</p></div><div class="row-actions"><button class="button primary" data-action="new-task">+ Новый шаг</button><button class="button" data-action="capture-inbox">Записать мысль</button></div></div><div class="filter-row">${['Все','Входящие','Следующий шаг','В работе','Жду ответа','Готово','Пауза'].map(s=>`<button class="button sm ${taskFilter===s?'active':''}" data-action="task-filter" data-id="${attr(s)}">${s}</button>`).join('')}</div><div class="field"><label class="field-label">Показать шаги по цели</label><select class="select" data-bind="task-filter-goal"><option value="Все">Все девять результатов</option>${data.goals.map(g=>`<option value="${g.id}" ${Number(goalFilter)===Number(g.id)&&goalFilter!=='Все'?'selected':''}>${h(g.id)}. ${h(first(g.vision,72))}</option>`).join('')}</select></div><div class="field" style="margin-top:12px"><label class="field-label">Проект</label><select class="select" data-bind="task-filter-project"><option value="Все">Все проекты</option><option value="_english" ${projectFilter==='_english'?'selected':''}>English / IELTS Academic</option>${data.projects.map(p=>`<option value="${attr(p.id)}" ${projectFilter===p.id?'selected':''}>${h(p.title)}</option>`).join('')}</select></div></div>`;
     out+='<div class="panel">';if(!all.length)out+='<div class="empty"><h3>Пока нет шагов по этому фильтру</h3><p>Можно переключить фильтр или добавить новый шаг.</p></div>';
-    for(const t of all){out+=`<div class="task-check"><input type="checkbox" data-action="check-task" data-id="${attr(t.id)}" aria-label="Шаг выполнен" ${taskCompleted(t)?'checked':''}><div style="flex:1"><div class="task-title ${taskCompleted(t)?'done':''}">${h(t.title)}</div><div class="task-meta">Цель ${h(t.goalId||'?')} · ${h(t.category)}${t.due?' · '+niceShort(t.due):''} · ${h(t.energy||'')}</div>${t.doneWhen?`<div class="small muted" style="margin-top:5px">Готово, когда: ${h(t.doneWhen)}</div>`:''}</div><button class="button sm ghost" data-action="edit-task" data-id="${attr(t.id)}">Править</button></div>`}
+    for(const t of all){out+=`<div class="task-check"><input type="checkbox" data-action="check-task" data-id="${attr(t.id)}" aria-label="Шаг выполнен" ${taskCompleted(t)?'checked':''}><div style="flex:1"><div class="task-title ${taskCompleted(t)?'done':''}">${h(t.title)}</div><div class="task-meta">${t.goalId?'Цель '+h(t.goalId):'Без привязки'} · ${h(t.category)}${t.due?' · '+niceShort(t.due):''} · ${h(t.energy||'')}</div>${t.doneWhen?`<div class="small muted" style="margin-top:5px">Готово, когда: ${h(t.doneWhen)}</div>`:''}</div><div class="row-actions"><button class="button sm ghost" data-action="stuck-task" data-id="${attr(t.id)}">Я застряла</button><button class="button sm ghost" data-action="edit-task" data-id="${attr(t.id)}">Править</button></div></div>`}
     out+='</div>';return out;
   }
   function calcMoney(m){let fields=[m.mandatory,m.variable,m.debt];if(fields.every(x=>x==null||x===''))return [null,null];let total=fields.reduce((a,x)=>a+Number(x||0),0);return [total,m.confirmed==null?null:Number(m.confirmed)-total]}
@@ -165,15 +191,77 @@
     out+=`<p class="sheet-callout">Разные валюты не суммируются без курса. Для анализа загрузи мне актуальную копию или сообщи новые операции, чтобы я сформировала пакет изменений.</p></div>`;
     out+=`<div class="panel peach" style="margin-top:16px"><h3>Правило безопасности</h3><p style="margin-top:7px">Если несколько месяцев подряд прогнозируется дефицит по подтверждённым деньгам, пора отдельно пересмотреть финансовые решения. Личный стратегический трекер не должен скрывать кассовые разрывы за оптимистичными ожиданиями.</p></div>`;return out;
   }
-  function renderReview(){let key=today().slice(0,7),r=data.reviews[key]||{};let out=contentHeader('Проверка курса','Раз в месяц достаточно 10–20 минут. Что действительно изменилось и как это влияет на следующие решения?');
-    out+=`<div class="panel"><div class="card-title"><div><div class="eyebrow">ЕЖЕМЕСЯЧНЫЙ ОБЗОР</div><h2 style="margin-top:7px">${monthTitle(key)}</h2></div><span class="pill lilac">10–20 минут</span></div><div class="form-stack"><div class="field"><label class="field-label">Что реально изменилось за этот месяц?</label><textarea class="textarea" data-bind="review:change" placeholder="Деньги, договорённости, навыки, условия жизни, отношения...">${h(r.change)}</textarea></div><div class="field"><label class="field-label">Что потребовало больше ресурсов, чем я ожидала?</label><textarea class="textarea" data-bind="review:cost" placeholder="Работа, неопределённость, уход за другими, стресс...">${h(r.cost)}</textarea></div><div class="field"><label class="field-label">Какая гипотеза подтвердилась или не подтвердилась?</label><textarea class="textarea" data-bind="review:learning" placeholder="На что можно опереться при следующем выборе?">${h(r.learning)}</textarea></div><div class="field"><label class="field-label">Что нужно изменить в следующем месяце?</label><textarea class="textarea" data-bind="review:decision" placeholder="Одна-две коррекции курса">${h(r.decision)}</textarea></div><div class="field"><label class="field-label">А что происходило с моей собственной жизнью?</label><textarea class="textarea" data-bind="review:life" placeholder="Отдых, здоровье, близость, удовольствие">${h(r.life)}</textarea></div></div><p class="sheet-callout">Поля сохраняются после выхода из них. Никаких обязательных ежедневных отчётов.</p></div>`;
-    const months=Object.entries(data.reviews).filter(([k,r])=>k!==key&&Object.values(r).some(Boolean)).sort((a,b)=>b[0].localeCompare(a[0]));
-    if(months.length){out+='<div class="panel" style="margin-top:16px"><h3 style="margin-bottom:12px">Предыдущие заметки</h3>';for(let [k,v] of months.slice(0,12))out+=`<div class="list-card"><div class="list-card-content"><b>${monthTitle(k)}</b><p>${h(first(v.change||v.learning||v.decision||v.life||'',160))}</p></div></div>`;out+='</div>'}
+  function renderReview(){
+    const key=selectedReviewMonth;
+    const r=data.reviews[key]||{};
+    const completed=data.tasks.filter(t=>t.status==='Готово' && t.completedAt?.slice(0,7)===key);
+    const spent=data.transactions.filter(t=>t.date?.slice(0,7)===key);
+    const monthWeeks=data.weeks.filter(w=>w.start?.slice(0,7)===key || w.end?.slice(0,7)===key);
+    const allMonths=[...new Set([today().slice(0,7),key,...Object.keys(data.reviews),...data.weeks.map(w=>w.start?.slice(0,7))])].filter(x=>/^\d{4}-\d{2}$/.test(x)).sort().reverse();
+    let out=contentHeader('Ретроспектива месяца','Вспомнить события, заметить цену результатов и решить, что менять дальше.');
+    out+=`<div class="panel" style="margin-bottom:16px"><div class="card-title"><div><div class="eyebrow">МЕСЯЧНЫЙ ОБЗОР · ORID</div><h2 style="margin-top:7px">${monthTitle(key)}</h2></div><span class="pill lilac">45–60 минут</span></div><div class="field"><label class="field-label">Какой месяц посмотреть?</label><select class="select" data-bind="review-month">${allMonths.map(m=>`<option value="${m}" ${m===key?'selected':''}>${monthTitle(m)}</option>`).join('')}</select></div></div>`;
+    out+=`<section class="panel tinted" style="margin-bottom:16px"><h3>Что приложение уже знает</h3><p class="small muted" style="margin:6px 0 12px">Ниже только те результаты, у которых сохранилась дата завершения. Старые задачи без даты здесь не учитываются.</p><div class="three-col"><div><div class="kpi-value">${completed.length}</div><div class="small muted">задач завершено с датой</div></div><div><div class="kpi-value">${monthWeeks.filter(w=>w.actual).length}</div><div class="small muted">недель с результатами</div></div><div><div class="kpi-value">${spent.length}</div><div class="small muted">записей о расходах</div></div></div>`;
+    if(completed.length)out+=`<div style="margin-top:12px"><strong>Завершено:</strong> ${h(completed.slice(0,7).map(t=>t.title).join(' · '))}</div>`;
+    out+='</section>';
+    const fields=[
+      ['change','1. Objective · Что произошло?','Какие результаты, события и изменения были значимыми? Что выпало из цифрового журнала?'],
+      ['feelings','2. Reflective · Как я это прожила?','Когда было интересно, тревожно, трудно или хорошо? Что чувствовала?'],
+      ['cost','Сколько это стоило сил?','Что требовало неоплачиваемого труда? Где я работала за пределами своих ресурсов?'],
+      ['learning','3. Interpretive · Что я поняла?','Какие способы работы помогали? Какие гипотезы не подтвердились? От кого и от чего я зависела?'],
+      ['life','Что происходило с моей собственной жизнью?','Отдых, здоровье, отношения, удовольствие. Что стоило защитить?'],
+      ['decision','4. Decisional · Что меняю в следующем месяце?','Что сохраняю, сокращаю, делегирую, останавливаю? Не больше трёх решений.'],
+      ['checkDate','Когда я вернусь к этим решениям?','На что посмотрю через месяц?']
+    ];
+    out+='<div class="panel"><div class="form-stack">';
+    for(const [id,title,placeholder] of fields)out+=`<div class="field"><label class="field-label">${title}</label><textarea class="textarea" data-bind="review:${id}" placeholder="${h(placeholder)}">${h(r[id]||'')}</textarea></div>`;
+    out+=`</div><p class="sheet-callout">Запись остаётся привязана к этому месяцу и не заменяет предыдущие ретроспективы. Приложение не создаёт из твоих решений задачи автоматически: сначала ты сама подтверждаешь выбор.</p></div>`;
     return out;
+  }
+  function renderProjects(){
+    let out=contentHeader('Проекты','Здесь видны законченные результаты между долгосрочной целью и повседневными шагами.');
+    out+=`<section class="panel" style="margin-bottom:16px"><div class="card-title"><div><h2>Мои проекты</h2><p>Не обязательно запускать всё одновременно. Это рабочие пространства, а не дополнительные обязанности.</p></div><button class="button primary" data-action="new-project">+ Проект</button></div></section>`;
+    const virtual={id:'_english',title:'English / IELTS Academic 7.5',description:'Вводный курс, диагностика, развитие языка и подготовка к экзамену.',goalId:3,status:'В работе'};
+    const projects=[virtual,...data.projects.filter(p=>p.id!=='_english')];
+    out+='<div class="two-col">';
+    for(const p of projects){const tasks=data.tasks.filter(t=>p.id==='_english'?isEnglishTask(t):t.projectId===p.id);
+      const active=tasks.filter(t=>!taskCompleted(t));out+=`<section class="panel"><div class="card-title"><div><h3>${h(p.title)}</h3><p>${h(p.description||'')}</p></div>${pill(p.status)}</div><p class="small muted">${tasks.length} связанных шагов · ${active.length} открытых</p><div class="row-actions" style="margin-top:15px"><button class="button sm primary" data-action="${p.id==='_english'?'tab':'project-detail'}" data-id="${p.id==='_english'?'english':attr(p.id)}">Открыть ↗</button>${p.id!=='_english'?`<button class="button sm" data-action="edit-project" data-id="${attr(p.id)}">Изменить</button>`:''}</div></section>`;
+    }out+='</div>';
+    if(data.projects.length===0)out+='<div class="panel tinted" style="margin-top:16px"><h3>С чего начать?</h3><p style="margin-top:9px">Проект IELTS уже собран из существующих задач по английскому — ничего импортировать повторно не нужно. Остальные проекты ты можешь создавать, когда появится конкретный завершённый результат.</p></div>';
+    return out;
+  }
+  function englishMeta(t){
+    const notes=String(t.notes||'');
+    const line=(label)=>{const m=notes.match(new RegExp('(?:^|\\n)'+label+':\\s*([^\\n]+)','i'));return m?m[1].trim():''};
+    const url=notes.match(/https?:\/\/[^\s<>"']+/i)?.[0]||'';
+    return {track:line('ЛИНИЯ')||'ENG / IELTS',minutes:line('ЛИНИЯ')?((notes.match(/\b(\d{1,3})\s*мин/i)||[])[1]||''):'',why:line('ЗАЧЕМ'),material:url};
+  }
+  function renderEnglish(){
+    const tasks=data.tasks.filter(isEnglishTask).slice().sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
+    const now=today(), todays=tasks.filter(t=>t.due===now&&!taskCompleted(t));
+    const next=tasks.filter(t=>!taskCompleted(t)&&t.due&&t.due>=now).slice(0,8);
+    const older=tasks.filter(t=>!taskCompleted(t)&&t.due&&t.due<now);
+    const done=tasks.filter(taskCompleted);
+    let out=contentHeader('English / IELTS Academic 7.5','Программа, задания и проверки без необходимости самой каждый день искать материалы.','МОЯ УЧЁБНАЯ ПРОГРАММА');
+    out+=`<section class="panel hero" style="margin-bottom:17px"><div class="eyebrow">ЦЕЛЬ · IELTS ACADEMIC</div><h2>7.5 overall · ориентир октябрь 2027</h2><p class="muted">Линии обучения: развитие английского (ENG) и освоение экзамена (IELTS). Оценка по Speaking и Writing в ChatGPT учебная, не официальный балл экзаменатора.</p></section>`;
+    out+=`<div class="three-col" style="margin-bottom:17px"><div class="panel"><div class="kpi-value">${tasks.length}</div><div class="kpi-label">заданий в программе</div></div><div class="panel"><div class="kpi-value">${done.length}</div><div class="kpi-label">отмечено выполненными</div></div><div class="panel"><div class="kpi-value">${older.length}</div><div class="kpi-label">раньше запланированы, пересмотри при желании</div></div></div>`;
+    out+=`<section class="panel" style="margin-bottom:16px"><div class="card-title"><div><h2>Урок на сегодня</h2><p>Задание из твоего календаря. Сохраняем то, что уже было загружено.</p></div></div>`;
+    if(!todays.length)out+=`<p class="muted">На сегодня нет незавершённого урока с этой датой. Можешь продолжить ближайший урок или выбрать отдых.</p>`;
+    for(const t of todays)out+=englishTaskCard(t,true);
+    out+='</section>';
+    out+=`<section class="panel" style="margin-bottom:16px"><h2 style="margin-bottom:12px">Ближайшие уроки</h2>`;
+    if(!next.length)out+='<p class="muted">Пока нет будущих занятий. Новые появятся после следующего учебного блока.</p>';
+    for(const t of next)out+=englishTaskCard(t,false);
+    out+='</section>';
+    if(older.length)out+=`<section class="panel" style="margin-bottom:16px"><h3>Ранее запланированные уроки</h3><p class="muted small" style="margin:7px 0 12px">${older.length} уроков. Пропущенное не образует долг: выбери то, что ещё полезно, или перенеси срок.</p>${older.slice(0,5).map(t=>englishTaskCard(t,false)).join('')}</section>`;
+    out+=`<section class="panel tinted"><h3>Где делать и проверять задания?</h3><p style="margin-top:8px">Открывай ссылку на официальный или учебный материал, выполняй задание и сверяй ответы по опубликованному ключу. Writing и Speaking отправляй в отдельный проект ChatGPT «IELTS Academic 7.5». После разбора отметь урок в этом приложении. Проверка ChatGPT не приравнивается к официальной оценке.</p><div class="row-actions" style="margin-top:14px"><button class="button sm" data-action="copy-ielts-prompt">Скопировать запрос для разбора в ChatGPT</button></div></section>`;
+    return out;
+  }
+  function englishTaskCard(t,expanded){const m=englishMeta(t),taskId=attr(t.id);
+    return `<div class="english-task"><div class="row-actions" style="justify-content:space-between;align-items:flex-start"><div><div class="eyebrow">${h(m.track)} · ${t.due?niceShort(t.due):'Без даты'}</div><h3 style="margin:6px 0">${h(t.title)}</h3></div><input type="checkbox" ${taskCompleted(t)?'checked':''} data-action="check-task" data-id="${taskId}" title="Отметить урок завершённым" aria-label="Урок завершён"></div>${m.why?`<p class="small muted">${h(m.why)}</p>`:''}<div class="row-actions" style="margin-top:10px">${m.material?`<a class="button sm" href="${attr(m.material)}" target="_blank" rel="noopener noreferrer">Открыть материал ↗</a>`:''}<button class="button sm" data-action="edit-task" data-id="${taskId}">Инструкция и результат</button><button class="button sm ghost" data-action="stuck-task" data-id="${taskId}">Сложно начать</button></div></div>`;
   }
   function renderSettings(){let out=contentHeader('Настройки и данные','Резервные копии, синхронизация и возможность забрать всё с собой.');
     out+=`<div class="panel"><h2>Где хранится моя стратегия?</h2><p class="muted" style="margin-top:10px">${HAS_CLOUD?'Облачная база Supabase, доступ только после входа. Данные хранятся отдельно для каждой учётной записи.':'Пока только браузер этого устройства. Автоматической синхронизации нет. Для настоящей синхронизации нужно настроить Supabase по инструкции из комплекта.'}</p><div class="row-actions" style="margin-top:17px"><span class="pill ${HAS_CLOUD?'':'warn'}"><span data-sync-dot class="sync-dot ${statusClass()}"></span><span data-sync-label>${h(syncState)}</span></span>${HAS_CLOUD?`<button class="button sm" data-action="reload-cloud">Проверить облако</button><button class="button sm" data-action="logout">Выйти</button>`:''}</div>${HAS_CLOUD&&session?`<p class="small muted" style="margin-top:10px">Аккаунт: ${h(session.user.email||'')}</p>`:''}</div>`;
-    out+=`<div class="panel"><h2>Мои данные всегда со мной</h2><p class="muted" style="margin:8px 0 18px">Скачай резервную копию JSON. Она содержит личные цели, финансы, задачи и заметки. Храни её в защищённом месте.</p><div class="row-actions"><button class="button primary" data-action="export">↓ Скачать резервную копию</button><button class="button" data-action="trigger-import">↑ Импортировать стратегию / копию</button></div><p class="sheet-callout">Импорт полностью заменяет текущую версию. Перед заменой мы предложим сохранить копию.</p></div>`;
+    out+=`<div class="panel"><h2>Мои данные всегда со мной</h2><p class="muted" style="margin:8px 0 18px">Скачай резервную копию JSON. Она содержит личные цели, финансы, задачи и заметки. Храни её в защищённом месте.</p><div class="row-actions"><button class="button primary" data-action="export">↓ Скачать резервную копию</button><button class="button" data-action="trigger-import">↑ Импортировать стратегию / копию</button></div><p class="sheet-callout">Обычные обновления сайта НЕ требуют импорта. При восстановлении старого файла текущая версия заменится; перед ним приложение скачает резервную копию.</p></div>`;
     out+=`<div class="panel"><h2>Изменения из разговора с ChatGPT</h2><p class="muted" style="margin:9px 0">Вставь пакет изменений из чата. Ты увидишь предварительный просмотр и сама подтвердишь добавление задач и расходов. Он НЕ заменяет твою стратегию целиком.</p><button class="button primary" data-action="chat-import">Вставить изменения из ChatGPT</button></div>`;
     out+=`<div class="panel tinted"><h3>Если я пропустила неделю</h3><p style="margin-top:8px">Можно вернуться сразу к сегодняшнему дню. Нет необходимости заполнять прошлые дни и закрывать старые задачи, чтобы снова начать двигаться.</p><div class="row-actions" style="margin-top:14px"><button class="button sm" data-action="go-current-week">Вернуться к текущей неделе</button></div></div>`;
     if(!HAS_CLOUD)out+=`<div class="notice" style="margin-top:16px">Для приватного облачного режима настрой авторизацию и политики доступа по файлу README. Не публикуй JSON со своими личными данными вместе с файлами сайта.</div>`;
@@ -186,9 +274,17 @@
     }
     if(modal.type==='task'){
       const t=modal.id?data.tasks.find(x=>x.id===modal.id):null;
-      return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Задача"><div class="modal-head"><div><div class="eyebrow">${t?'РЕДАКТИРОВАНИЕ':'НОВЫЙ ШАГ'}</div><h2 style="margin-top:7px">${t?'Изменить действие':'Добавить действие'}</h2></div><button class="modal-close" data-action="close-modal" aria-label="Закрыть">×</button></div><form id="task-form" class="form-stack"><div class="field"><label class="field-label">Что конкретно сделать?</label><input name="title" class="input" value="${attr(t?.title||'')}" required maxlength="600" placeholder="Одно наблюдаемое действие"></div><div class="field"><label class="field-label">Готово, когда…</label><textarea name="doneWhen" class="textarea compact" placeholder="Как понять, что действие закончено?">${h(t?.doneWhen||'')}</textarea></div><div class="grid-fields"><div class="field"><label class="field-label">К какой долгосрочной цели относится?</label><select class="select" name="goalId">${data.goals.map(g=>`<option value="${g.id}" ${Number(t?.goalId||1)===Number(g.id)?'selected':''}>${g.id}. ${h(first(g.vision,48))}</option>`).join('')}</select></div><div class="field"><label class="field-label">До какой даты?</label><input name="due" class="input" type="date" value="${attr(t?.due||'')}"></div></div><div class="grid-fields"><div class="field"><label class="field-label">Сколько блоков по 30 минут?</label><input name="blocks" class="input" type="number" min="0" max="100" value="${attr(t?.blocks??'')}"></div><div class="field"><label class="field-label">Необходимые силы</label><select name="energy" class="select">${['Низкая','Средняя','Высокая'].map(v=>`<option ${v===(t?.energy||'Средняя')?'selected':''}>${v}</option>`).join('')}</select></div></div><div class="field"><label class="field-label">Состояние</label><select name="status" class="select">${['Следующий шаг','В работе','Готово','Пауза'].map(v=>`<option ${v===(t?.status||'Следующий шаг')?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label class="field-label">Заметки</label><textarea name="notes" class="textarea compact">${h(t?.notes||'')}</textarea></div><div class="row-actions"><button class="button primary" type="submit">Сохранить шаг</button>${t?'<button type="button" class="button danger" data-action="delete-task" data-id="'+attr(t.id)+'">Удалить</button>':''}</div></form></section></div>`;
+      return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Задача"><div class="modal-head"><div><div class="eyebrow">${t?'РЕДАКТИРОВАНИЕ':'НОВЫЙ ШАГ'}</div><h2 style="margin-top:7px">${t?'Изменить действие':'Добавить действие'}</h2></div><button class="modal-close" data-action="close-modal" aria-label="Закрыть">×</button></div><form id="task-form" class="form-stack"><div class="field"><label class="field-label">Что конкретно сделать?</label><input name="title" class="input" value="${attr(t?.title||'')}" required maxlength="600" placeholder="Одно наблюдаемое действие"></div><div class="field"><label class="field-label">Готово, когда…</label><textarea name="doneWhen" class="textarea compact" placeholder="Как понять, что действие закончено?">${h(t?.doneWhen||'')}</textarea></div><div class="grid-fields"><div class="field"><label class="field-label">К какой долгосрочной цели относится?</label><select class="select" name="goalId"><option value="0" ${!t?.goalId?'selected':''}>Входящие · определить позже</option>${data.goals.map(g=>`<option value="${g.id}" ${Number(t?.goalId||0)===Number(g.id)?'selected':''}>${g.id}. ${h(first(g.vision,48))}</option>`).join('')}</select></div><div class="field"><label class="field-label">До какой даты?</label><input name="due" class="input" type="date" value="${attr(t?.due||'')}"></div></div><div class="grid-fields"><div class="field"><label class="field-label">Сколько блоков по 30 минут?</label><input name="blocks" class="input" type="number" min="0" max="100" value="${attr(t?.blocks??'')}"></div><div class="field"><label class="field-label">Необходимые силы</label><select name="energy" class="select">${['Низкая','Средняя','Высокая'].map(v=>`<option ${v===(t?.energy||'Средняя')?'selected':''}>${v}</option>`).join('')}</select></div></div><div class="field"><label class="field-label">Состояние</label><select name="status" class="select">${['Входящие','Следующий шаг','В работе','Жду ответа','Готово','Пауза'].map(v=>`<option ${v===(t?.status||'Входящие')?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label class="field-label">Проект (если есть)</label><select class="select" name="projectId"><option value="">Без проекта</option>${data.projects.map(p=>`<option value="${attr(p.id)}" ${p.id===t?.projectId?'selected':''}>${h(p.title)}</option>`).join('')}</select></div><div class="field"><label class="field-label">С чего проще начать?</label><input class="input" name="nextStep" value="${attr(t?.nextStep||'')}" placeholder="Самый маленький шаг"></div><div class="field"><label class="field-label">Заметки</label><textarea name="notes" class="textarea compact">${h(t?.notes||'')}</textarea></div><div class="row-actions"><button class="button primary" type="submit">Сохранить шаг</button>${t?'<button type="button" class="button danger" data-action="delete-task" data-id="'+attr(t.id)+'">Удалить</button>':''}</div></form></section></div>`;
     }
-    if(modal.type==='capture')return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Голосовой ввод"><div class="modal-head"><div><div class="eyebrow">БЫСТРАЯ ЗАПИСЬ</div><h2>Сказать или написать</h2></div><button class="modal-close" data-action="close-modal">×</button></div><form id="capture-form" class="form-stack"><p class="muted">Нажми микрофон, произнеси фразу по-русски или используй диктовку клавиатуры. Перед сохранением проверь сумму, валюту и дату.</p><div class="row-actions"><button class="button" type="button" data-action="start-dictation">🎙 Надиктовать</button><span class="small muted" id="voice-status">Если кнопка недоступна, печатай или используй микрофон клавиатуры.</span></div><div class="field"><label class="field-label">Что записать?</label><textarea class="textarea" name="utterance" id="spoken-text" placeholder="Например: потратила 25 евро на продукты или отправить предложение в пятницу" required>${h(voiceDraft)}</textarea></div><div class="field"><label class="field-label">Тип записи</label><select class="select" name="kind" id="capture-kind"><option value="task" ${modal.kind==='task'?'selected':''}>Задача</option><option value="expense" ${modal.kind==='expense'?'selected':''}>Расход</option><option value="note" ${modal.kind==='note'?'selected':''}>Заметка на сегодня</option></select></div><div class="grid-fields"><div class="field"><label class="field-label">Дата (проверь)</label><input class="input" name="date" type="date" value="${today()}"></div><div class="field"><label class="field-label">Цель для задачи</label><select class="select" name="goalId">${data.goals.map(g=>`<option value="${g.id}">${g.id}. ${h(first(g.vision,45))}</option>`).join('')}</select></div></div><div class="grid-fields"><div class="field"><label class="field-label">Сумма расхода, если это расход</label><input class="input" name="amount" type="number" min="0" step="0.01" placeholder="25"></div><div class="field"><label class="field-label">Валюта</label><select class="select" name="currency"><option value="">Указать валюту</option><option>EUR</option><option>GEL</option><option>RUB</option><option>USD</option></select></div></div><button class="button primary" type="submit">Проверила — сохранить</button><p class="small muted">Распознавание речи может обрабатываться сервисами браузера. Для чувствительных сведений используй обычный текстовый ввод.</p></form></section></div>`;
+    if(modal.type==='project'){
+      const p=data.projects.find(x=>x.id===modal.id);
+      return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Проект"><div class="modal-head"><h2>${p?'Изменить проект':'Создать проект'}</h2><button class="modal-close" data-action="close-modal">×</button></div><form id="project-form" class="form-stack"><div class="field"><label class="field-label">Название проекта</label><input class="input" name="title" value="${attr(p?.title||'')}" required maxlength="180" placeholder="Например: Портфолио на английском"></div><div class="field"><label class="field-label">Какой законченный результат нужен?</label><textarea class="textarea" name="description" placeholder="Что будет готово и зачем?">${h(p?.description||'')}</textarea></div><div class="field"><label class="field-label">Связанная долгосрочная цель</label><select class="select" name="goalId"><option value="0">Пока без привязки</option>${data.goals.map(g=>`<option value="${g.id}" ${Number(p?.goalId)===Number(g.id)?'selected':''}>${g.id}. ${h(first(g.vision,70))}</option>`).join('')}</select></div><div class="field"><label class="field-label">Состояние</label><select class="select" name="status">${['В планах','В работе','Пауза','Готово'].map(x=>`<option ${x===(p?.status||'В планах')?'selected':''}>${x}</option>`).join('')}</select></div><button type="submit" class="button primary">Сохранить проект</button></form></section></div>`;
+    }
+    if(modal.type==='stuck'){
+      const t=data.tasks.find(x=>x.id===modal.id);if(!t)return '';
+      return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Что мешает начать"><div class="modal-head"><div><div class="eyebrow">ПОМОЩЬ С ЗАДАЧЕЙ</div><h2>${h(first(t.title,100))}</h2></div><button class="modal-close" data-action="close-modal">×</button></div><form id="stuck-form" class="form-stack"><div class="field"><label class="field-label">Что сейчас мешает?</label><select class="select" name="blocker"><option value="Не понимаю, с чего начать">Не понимаю, с чего начать</option><option value="Задача слишком большая">Задача слишком большая</option><option value="Не хватает сил">Не хватает сил</option><option value="Жду другого человека">Жду ответа или действия другого человека</option><option value="Уже не приоритет">Сейчас это не приоритет</option></select></div><div class="field"><label class="field-label">Самый маленький следующий шаг</label><textarea class="textarea" name="nextStep" placeholder="Например: открыть прошлые заметки и выписать 3 факта">${h(t.nextStep||'')}</textarea><p class="help">Можно оставить пустым. Не нужно составлять подробный план, если сейчас нет сил.</p></div><button class="button primary" type="submit">Сохранить и вернуться</button></form></section></div>`;
+    }
+    if(modal.type==='capture')return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Голосовой ввод"><div class="modal-head"><div><div class="eyebrow">БЫСТРАЯ ЗАПИСЬ</div><h2>Сказать или написать</h2></div><button class="modal-close" data-action="close-modal">×</button></div><form id="capture-form" class="form-stack"><p class="muted">Нажми микрофон, произнеси фразу по-русски или используй диктовку клавиатуры. Перед сохранением проверь сумму, валюту и дату.</p><div class="row-actions"><button class="button" type="button" data-action="start-dictation">🎙 Надиктовать</button><span class="small muted" id="voice-status">Если кнопка недоступна, печатай или используй микрофон клавиатуры.</span></div><div class="field"><label class="field-label">Что записать?</label><textarea class="textarea" name="utterance" id="spoken-text" placeholder="Например: потратила 25 евро на продукты или отправить предложение в пятницу" required>${h(voiceDraft)}</textarea></div><div class="field"><label class="field-label">Тип записи</label><select class="select" name="kind" id="capture-kind"><option value="task" ${modal.kind==='task'?'selected':''}>Задача</option><option value="expense" ${modal.kind==='expense'?'selected':''}>Расход</option><option value="note" ${modal.kind==='note'?'selected':''}>Заметка на сегодня</option></select></div><div class="grid-fields"><div class="field"><label class="field-label">Дата (проверь)</label><input class="input" name="date" type="date" value="${modal.kind==='expense'?today():''}"></div><div class="field"><label class="field-label">Цель для задачи</label><select class="select" name="goalId"><option value="0">Входящие, разберу позже</option>${data.goals.map(g=>`<option value="${g.id}">${g.id}. ${h(first(g.vision,45))}</option>`).join('')}</select></div></div><div class="grid-fields"><div class="field"><label class="field-label">Сумма расхода, если это расход</label><input class="input" name="amount" type="number" min="0" step="0.01" placeholder="25"></div><div class="field"><label class="field-label">Валюта</label><select class="select" name="currency"><option value="">Указать валюту</option><option>EUR</option><option>GEL</option><option>RUB</option><option>USD</option></select></div></div><button class="button primary" type="submit">Проверила — сохранить</button><p class="small muted">Распознавание речи может обрабатываться сервисами браузера. Для чувствительных сведений используй обычный текстовый ввод.</p></form></section></div>`;
     if(modal.type==='chat')return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Изменения из ChatGPT"><div class="modal-head"><div><div class="eyebrow">СОВМЕСТНАЯ РАБОТА</div><h2>Изменения из ChatGPT</h2></div><button class="modal-close" data-action="close-modal">×</button></div><form id="chat-patch-form" class="form-stack"><p class="muted">Вставь сюда пакет изменений, который мы составили после разговора. Сначала появится предварительный просмотр.</p><textarea class="textarea" name="payload" rows="8" required placeholder='{ "type": "next-chapter-patch", "version": 1, "changes": [...] }'>${h(modal.raw||'')}</textarea><button class="button primary" type="submit">Проверить изменения</button></form></section></div>`;
     if(modal.type==='patch-preview'&&pendingPatch){return `<div class="modal-overlay" data-action="close-overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Предварительный просмотр"><div class="modal-head"><div><h2>Проверить перед сохранением</h2></div><button class="modal-close" data-action="close-modal">×</button></div><p class="muted">${pendingPatch.changes.length} изменений. Ничего не записывается до подтверждения.</p>${pendingPatch.changes.map(c=>`<div class="task-check"><div><strong>${h(c.op==='add_task'?'Задача':c.op==='add_expense'?'Расход':'Изменение задачи')}</strong><p class="small muted">${h(c.op==='add_task'?c.title:c.op==='add_expense'?`${c.date} · ${c.amount} ${c.currency} · ${c.category||''}`:`${c.id}: ${c.status}`)}</p></div></div>`).join('')}<div class="row-actions" style="margin-top:16px"><button class="button primary" data-action="confirm-patch">Добавить эти изменения</button><button class="button" data-action="close-modal">Отменить</button></div></section></div>`;}
     return '';
@@ -277,7 +373,7 @@
     let incoming;
     try{incoming=JSON.parse(await file.text());if(!incoming||!Array.isArray(incoming.goals)||!Array.isArray(incoming.tasks)||!Array.isArray(incoming.weeks))throw Error('Это не файл стратегии')}
     catch(e){notify('Не удалось прочитать файл стратегии. Проверь формат JSON.');return}
-    if((data.goals.length||data.tasks.length)&&!window.confirm('Импорт заменит все данные в приложении. Сначала скачай резервную копию, если хочешь сохранить текущую версию. Продолжить?'))return;
+    if(data.goals.length||data.tasks.length){exportData();if(!window.confirm('ВНИМАНИЕ: Скачана резервная копия. Восстановление целиком заменит текущие данные, включая новые IELTS-уроки и заметки. Ты действительно хочешь заменить всё?'))return;}
     data=normalize(incoming);currentWeek=-1;view='today';modal=null;
     markChange(true);notify('Стратегия импортирована. Изменения сохраняются.');
   }
@@ -289,6 +385,7 @@
       d.taskIds=Array.isArray(d.taskIds)?d.taskIds:[];if(!d.taskIds.includes(value))d.taskIds.push(value);markChange();return;
     }
     if(type==='task-filter-goal'){goalFilter=value;render();return}
+    if(type==='task-filter-project'){projectFilter=value;render();return}
     if(type==='daily'){
       const k=today();let d=data.daily[k]||(data.daily[k]={energy:'обычно',taskIds:[]});d[p[1]]=value;markChange(false);return;
     }
@@ -304,8 +401,9 @@
     if(type==='money'){
       let m=data.finances.find(m=>m.id===p[1]);if(!m)return;m[p[2]]=value===''?null:Number(value);markChange(true);return;
     }
+    if(type==='review-month'){selectedReviewMonth=value;render();return}
     if(type==='review'){
-      let k=today().slice(0,7),r=data.reviews[k]||(data.reviews[k]={});r[p[1]]=value;markChange(false);return;
+      let k=selectedReviewMonth,r=data.reviews[k]||(data.reviews[k]={});r[p[1]]=value;markChange(false);return;
     }
   }
   root.addEventListener('change',e=>{if(e.target.dataset.bind)processChange(e.target)});
@@ -315,7 +413,7 @@
     const btn=e.target.closest('[data-action]');if(!btn)return;
     const action=btn.dataset.action,id=btn.dataset.id;
     if(action==='close-overlay'&&e.target!==btn)return;
-    if(action==='quick-capture'){voiceDraft='';modal={type:'capture',kind:view==='finances'?'expense':'task'};render();return}
+    if(action==='quick-capture'||action==='capture-inbox'){voiceDraft='';modal={type:'capture',kind:action==='capture-inbox'?'task':view==='finances'?'expense':'task'};render();return}
     if(action==='chat-import'){modal={type:'chat'};render();return}
     if(action==='confirm-patch'){if(!pendingPatch)return;applyPatch(pendingPatch);pendingPatch=null;modal=null;markChange();notify('Изменения добавлены. Проверь сохранение.');return}
     if(action==='check-suggestion'){let d=data.daily[today()]||(data.daily[today()]={energy:'обычно',taskIds:[]});if(!Array.isArray(d.completedSuggestions))d.completedSuggestions=[];d.completedSuggestions=btn.checked?[...new Set([...d.completedSuggestions,id])]:d.completedSuggestions.filter(x=>x!==id);markChange();return}
@@ -331,12 +429,17 @@
     if(action==='current-week'){currentWeek=-1;render();return}
     if(action==='go-current-week'){currentWeek=-1;view='weeks';render();return}
     if(action==='goal'){modal={type:'goal',id:Number(id)};render();return}
+    if(action==='new-project'){modal={type:'project'};render();return}
+    if(action==='edit-project'){modal={type:'project',id};render();return}
+    if(action==='project-detail'){view='tasks';projectFilter=id;goalFilter='Все';taskFilter='Все';modal=null;render();return}
+    if(action==='stuck-task'){modal={type:'stuck',id};render();return}
+    if(action==='copy-ielts-prompt'){navigator.clipboard?.writeText('Я выполняю урок IELTS Academic 7.5. Помоги сначала разобраться в критериях задания на основе официального источника, затем проверь мой ответ, объясни ошибки и предложи короткую тренировку. Не выдавай учебную оценку за официальный балл экзамена.');notify('Запрос скопирован для ChatGPT');return}
     if(action==='new-task'){modal={type:'task',id:null};render();return}
     if(action==='edit-task'){modal={type:'task',id};render();return}
     if(action==='task-filter'){taskFilter=id;render();return}
     if(action==='energy'){const d=data.daily[today()]||(data.daily[today()]={energy:'обычно',taskIds:[]});d.energy=id;markChange();return}
     if(action==='remove-today-task'){let d=data.daily[today()];if(d){d.taskIds=(d.taskIds||[]).filter(x=>x!==id);markChange()}return}
-    if(action==='check-task'){const t=data.tasks.find(x=>x.id===id);if(t){t.status=btn.checked?'Готово':'Следующий шаг';markChange()}return}
+    if(action==='check-task'){const t=data.tasks.find(x=>x.id===id);if(t){t.status=btn.checked?'Готово':'Следующий шаг';t.completedAt=btn.checked?today():'';markChange()}return}
     if(action==='delete-task'){
       if(!window.confirm('Удалить этот шаг из плана?'))return;
       data.tasks=data.tasks.filter(t=>t.id!==id);for(const d of Object.values(data.daily))d.taskIds=(d.taskIds||[]).filter(x=>x!==id);modal=null;markChange();notify('Шаг удалён');return;
@@ -372,17 +475,32 @@
       e.preventDefault();const raw=String(new FormData(e.target).get('payload')||'');try{pendingPatch=parsePatch(raw);modal={type:'patch-preview'};render()}catch(err){notify(err.message||'Неверный формат пакета')};return;
     }
     if(e.target.id==='capture-form'){
-      e.preventDefault();const f=new FormData(e.target),kind=f.get('kind'), utterance=String(f.get('utterance')||'').trim(), date=String(f.get('date')||today());
-      if(!utterance||!validISO(date)){notify('Проверь текст и дату');return}
-      if(kind==='task'){let goalId=Number(f.get('goalId')||1);data.tasks.push({id:guid('T'),goalId,category:byGoal(goalId)?.category||'',title:utterance,due:date,status:'Следующий шаг',notes:'Добавлено через быструю запись'});}
-      else if(kind==='note'){let d=data.daily[date]||(data.daily[date]={energy:'обычно',taskIds:[]});d.note=[d.note,utterance].filter(Boolean).join('\n');}
-      else{const parsed=parseVoiceMoney(utterance),amount=Number(f.get('amount')||parsed?.amount),currency=String(f.get('currency')||parsed?.currency||'');if(!(amount>0)||!['EUR','GEL','RUB','USD'].includes(currency)){notify('Для расхода укажи сумму и валюту');return}data.transactions.push({id:guid('X'),date,amount,currency,category:'Другое',note:utterance,source:'Голос / текст'});}
+      e.preventDefault();const f=new FormData(e.target),kind=f.get('kind'), utterance=String(f.get('utterance')||'').trim(), date=String(f.get('date')||'');
+      if(!utterance||(date&&!validISO(date))){notify('Проверь текст и дату');return}
+      if(kind==='task'){let goalId=Number(f.get('goalId')||0);data.tasks.push({id:guid('T'),goalId,category:byGoal(goalId)?.category||'Входящие',title:utterance,due:date,status:goalId?'Следующий шаг':'Входящие',notes:'Добавлено через быструю запись'});}
+      else if(kind==='note'){let noteDate=date||today();let d=data.daily[noteDate]||(data.daily[noteDate]={energy:'обычно',taskIds:[]});d.note=[d.note,utterance].filter(Boolean).join('\n');}
+      else{const parsed=parseVoiceMoney(utterance),amount=Number(f.get('amount')||parsed?.amount),currency=String(f.get('currency')||parsed?.currency||'');if(!(amount>0)||!['EUR','GEL','RUB','USD'].includes(currency)){notify('Для расхода укажи сумму и валюту');return}data.transactions.push({id:guid('X'),date:date||today(),amount,currency,category:'Другое',note:utterance,source:'Голос / текст'});}
       voiceDraft='';modal=null;markChange();notify('Запись сохранена');return;
+    }
+    if(e.target.id==='project-form'){
+      e.preventDefault();const f=new FormData(e.target),title=String(f.get('title')||'').trim();if(!title)return notify('Нужно название проекта');
+      const old=modal?.id?data.projects.find(p=>p.id===modal.id):null;
+      const p={...(old||{}),id:old?.id||guid('P'),title,description:String(f.get('description')||''),goalId:Number(f.get('goalId')||0),status:String(f.get('status')||'В планах')};
+      if(old)Object.assign(old,p);else data.projects.push(p);
+      modal=null;markChange();return;
+    }
+    if(e.target.id==='stuck-form'){
+      e.preventDefault();const t=data.tasks.find(x=>x.id===modal?.id);if(!t)return;
+      const f=new FormData(e.target);t.blocker=String(f.get('blocker')||'');t.nextStep=String(f.get('nextStep')||'').slice(0,600);
+      if(t.blocker==='Жду другого человека')t.status='Жду ответа';
+      if(t.blocker==='Уже не приоритет')t.status='Пауза';
+      modal=null;markChange();notify('Сохранила. Можно вернуться позже.');return;
     }
     if(e.target.id==='task-form'){
       e.preventDefault();const f=new FormData(e.target);const title=String(f.get('title')||'').trim();if(!title){notify('Добавь название действия');return}
-      const goalId=Number(f.get('goalId')||1);const old=modal?.id?data.tasks.find(t=>t.id===modal.id):null;
-      const t={id:old?.id||('T'+Date.now().toString(36)),goalId,category:byGoal(goalId)?.category||'Другое',title,doneWhen:String(f.get('doneWhen')||''),blocks:String(f.get('blocks')||''),due:String(f.get('due')||''),energy:String(f.get('energy')||'Средняя'),status:String(f.get('status')||'Следующий шаг'),notes:String(f.get('notes')||'')};
+      const goalId=Number(f.get('goalId')||0);const old=modal?.id?data.tasks.find(t=>t.id===modal.id):null;
+      const t={...(old||{}),id:old?.id||guid('T'),goalId,category:byGoal(goalId)?.category||'Входящие',title,doneWhen:String(f.get('doneWhen')||''),blocks:String(f.get('blocks')||''),due:String(f.get('due')||''),energy:String(f.get('energy')||'Средняя'),status:String(f.get('status')||'Следующий шаг'),projectId:String(f.get('projectId')||''),nextStep:String(f.get('nextStep')||''),notes:String(f.get('notes')||'')};
+      if(t.status==='Готово'&&!t.completedAt)t.completedAt=today();if(t.status!=='Готово')t.completedAt='';
       if(old)Object.assign(old,t);else data.tasks.push(t);modal=null;markChange();notify('Шаг сохранён');return;
     }
   });
