@@ -17,7 +17,7 @@
   let data = HAS_CLOUD ? blank() : getLocal();
   let api=null, session=null, revision=0, mode=HAS_CLOUD?'loading':'local', view='today', currentWeek=-1;
   let pendingPatch=null, voiceDraft='', voiceRecognition=null;
-  let modal=null, taskFilter='Все', goalFilter='Все', projectFilter='Все', selectedReviewMonth=today().slice(0,7), authMode='login', syncState=HAS_CLOUD?'Подключение…':'Только на этом устройстве';
+  let modal=null, taskFilter='Все', goalFilter='Все', projectFilter='Все', selectedReviewMonth=today().slice(0,7), selectedDailyDate=today(), authMode='login', syncState=HAS_CLOUD?'Подключение…':'Только на этом устройстве';
   let saveTimer=null, isSaving=false, localChanges=0, dirty=false, conflict=false, toastTimer=null, listening=null;
   const $ = id => document.getElementById(id);
   const h = v => String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -34,6 +34,40 @@
   function getWeekIndex(){ if(!data.weeks.length)return -1;if(currentWeek>=0)return Math.min(currentWeek,data.weeks.length-1);let t=today();let ix=data.weeks.findIndex(w=>w.start<=t&&w.end>=t); if(ix!==-1)return ix;return t>data.weeks.at(-1).end?data.weeks.length-1:0; }
   function week(){const i=getWeekIndex();return i<0?null:data.weeks[i];}
   function day(){return data.daily[today()]||{energy:'обычно',main:'',fallback:'',extra:'',care:'',note:'',taskIds:[]}}
+  // История использует те же дневные записи. Никакого отдельного хранилища или переноса данных.
+  function hasDailyContent(d){
+    return d && (['main','fallback','extra','care','note'].some(k=>String(d[k]||'').trim()) ||
+      (Array.isArray(d.taskIds)&&d.taskIds.length>0) ||
+      (Array.isArray(d.completedSuggestions)&&d.completedSuggestions.length>0) ||
+      (d.energy&&d.energy!=='обычно'));
+  }
+  function dailyDates(){return Object.keys(data.daily).filter(k=>validISO(k)&&k<=today()&&hasDailyContent(data.daily[k])).sort().reverse()}
+  function dailySaveStatus(){return `<div class="daily-save-status" role="status" aria-live="polite"><span data-sync-dot class="sync-dot ${statusClass()}"></span><span data-sync-label>${h(syncState)}</span><span class="daily-save-hint">· автоматически</span></div>`}
+  function dailyNavigation(){
+    const t=today(),past=selectedDailyDate!==t,dates=dailyDates(),after=dates.filter(k=>k!==selectedDailyDate);
+    const next=dateLocal(selectedDailyDate);next.setDate(next.getDate()+1);
+    return `<section class="panel daily-history-nav"><div class="daily-history-heading"><div><div class="eyebrow">ДНЕВНЫЕ ЗАПИСИ</div><h3>${past?'Записи за '+nice(selectedDailyDate):'Сегодня, '+nice(t)}</h3><p class="muted small">Все дни остаются в истории. Можно вернуться к любой дате.</p></div><span class="pill ${past?'blue':'lilac'}">${past?'Прошлый день':'Сегодня'}</span></div>
+      <div class="daily-history-controls">
+      <button type="button" class="button sm" data-action="prev-day" aria-label="Предыдущий день">← Назад</button>
+      <label class="daily-date-field"><span class="small muted">Дата</span><input type="date" class="input" data-bind="history-date" value="${attr(selectedDailyDate)}" max="${t}" aria-label="Дата дневной записи"></label>
+      <button type="button" class="button sm" data-action="next-day" ${todayFromDate(next)>t?'disabled':''}>Вперёд →</button>
+      <button type="button" class="button sm ${past?'primary':''}" data-action="go-today" ${!past?'disabled':''}>Сегодня</button>
+      </div>
+      ${dates.length?`<label class="daily-saved-select"><span class="small muted">Или выбери день с записями</span><select class="select" data-bind="saved-day"><option value="">Выбрать из истории…</option>${dates.map(k=>`<option value="${k}" ${k===selectedDailyDate?'selected':''}>${nice(k)}</option>`).join('')}</select></label>`:''}
+    </section>`;
+  }
+  function archiveField(label,key,placeholder,d){return `<div class="field"><label class="field-label" for="archive-${key}">${label}</label><textarea id="archive-${key}" class="textarea compact" data-bind="archive:${key}" placeholder="${attr(placeholder)}">${h(d[key]||'')}</textarea></div>`}
+  function renderDailyArchive(){
+    const k=selectedDailyDate,d=data.daily[k]||{},selected=(d.taskIds||[]).map(id=>data.tasks.find(t=>t.id===id)).filter(Boolean);
+    let out=contentHeader('Дневные записи',`Здесь сохранилось то, что ты планировала и замечала ${nice(k)}.`, 'МОЯ СЛЕДУЮЩАЯ ГЛАВА')+syncWarning()+dailyNavigation();
+    out+=`<div class="notice daily-archive-note">Ты смотришь ${nice(k)}. Изменения в полях сохраняются именно за эту дату. Задачи и их нынешние статусы здесь не меняются.</div>`;
+    if(!hasDailyContent(d))out+=`<div class="empty" style="margin-bottom:16px"><h3>За этот день пока нет записей</h3><p>Можно оставить его пустым или добавить воспоминание сейчас.</p></div>`;
+    out+=`<div class="two-col"><div class="stack"><section class="panel"><div class="card-title"><div><h2>Мой план</h2><p>Какие действия я намечала на этот день.</p></div></div><div class="daily-fields">${archiveField('Самое важное действие','main','Что было главным?',d)}${archiveField('Если сил мало, достаточно…','fallback','Самый маленький шаг',d)}${archiveField('Если останутся силы','extra','Необязательное',d)}</div>${dailySaveStatus()}</section>`;
+    if(selected.length)out+=`<section class="panel"><h3>Выбранные на тот день шаги</h3><p class="small muted" style="margin:8px 0">Показываются названия. Статусы задач могут уже измениться.</p>${selected.map(t=>`<div class="list-card"><div class="list-card-content"><span class="task-title">${h(t.title)}</span></div></div>`).join('')}</section>`;
+    out+=`</div><div class="stack"><section class="panel peach"><h3>Как я себя чувствовала?</h3><p class="small muted" style="margin:7px 0 12px">Сколько было сил в тот день?</p><div class="segment">${[['мало','Мало'],['обычно','Обычно'],['много','Много']].map(([e,label])=>`<button data-action="archive-energy" data-id="${e}" class="${(d.energy||'обычно')===e?'active':''}">${label}</button>`).join('')}</div><div style="margin-top:16px">${archiveField('Что было для меня хорошим?','care','Прогулка, отдых, разговор…',d)}</div>${dailySaveStatus()}</section>`;
+    out+=`<section class="panel"><h3>В конце дня</h3><p class="small muted" style="margin:7px 0 12px">Что получилось? Что было важным?</p>${archiveField('Мои наблюдения','note','Можно оставить пустым',d)}${dailySaveStatus()}</section></div></div>`;
+    return out;
+  }
   const taskCompleted = t => t.status==='Готово';
   const byGoal = id => data.goals.find(g=>Number(g.id)===Number(id));
   function markChange(redraw=true){
@@ -128,20 +162,21 @@
   }
   function importPrompt(){return `<div class="empty big"><div class="empty-icon">✧</div><h3>Твоя стратегия готова к переносу</h3><p>Загрузи файл <b>moia_strategia_2026-2027.json</b> из папки «private-import». Девять долгосрочных ориентиров, годовые результаты, 52 недели и 28 шагов появятся здесь автоматически.</p><div class="row-actions"><button class="button primary" data-action="trigger-import">Импортировать стратегию</button><button class="button" data-action="tab" data-id="settings">Как сохраняются данные</button></div></div>`}
   function syncWarning(){return conflict?`<div class="notice" style="margin-bottom:14px"><b>Конфликт изменений между устройствами.</b> Данные на сервере уже обновились. Скачай локальную копию, затем загрузи новую облачную версию. <div class="row-actions" style="margin-top:8px"><button class="button sm" data-action="export">Скачать мою версию</button><button class="button sm" data-action="reload-cloud">Загрузить облачную</button></div></div>`:''}
-  function renderToday(){let w=week(),d=day(),tasklist=(d.taskIds||[]).map(id=>data.tasks.find(t=>t.id===id)).filter(Boolean),options=data.tasks.filter(t=>!taskCompleted(t)&&!(d.taskIds||[]).includes(t.id));let finished=data.tasks.filter(taskCompleted).length;
+  function renderToday(){if(!validISO(selectedDailyDate)||selectedDailyDate>today())selectedDailyDate=today();if(selectedDailyDate!==today())return renderDailyArchive();let w=week(),d=day(),tasklist=(d.taskIds||[]).map(id=>data.tasks.find(t=>t.id===id)).filter(Boolean),options=data.tasks.filter(t=>!taskCompleted(t)&&!(d.taskIds||[]).includes(t.id));let finished=data.tasks.filter(taskCompleted).length;
     let out=contentHeader('Сегодня',`${nice(today())}. Один содержательный шаг тоже считается движением.`, 'МОЯ СЛЕДУЮЩАЯ ГЛАВА')+syncWarning();
     if(!data.goals.length)return out+importPrompt();
+    out+=dailyNavigation();
     out+=`<section class="panel hero" style="margin-bottom:17px"><div class="eyebrow">ФОКУС НЕДЕЛИ · ${w?niceShort(w.start)+' – '+niceShort(w.end):'нет недели'}</div><h2>${h(w?.focus||'Выбери, что должно измениться на этой неделе')}</h2><p class="muted">${h(w?.second?'Дополнительно: '+w.second:'Лучше один настоящий результат, чем десять пунктов в списке.')}</p><div style="margin-top:17px">${button('tab','Открыть неделю  ↗','sm')}</div></section>`;
     out+=renderPlannedToday();
-    out+=`<div class="two-col"><div class="stack"><section class="panel"><div class="card-title"><div><h2>Мой план</h2><p>Не обязательно заполнять все поля.</p></div><button class="button sm" data-action="quick-capture">🎙 Сказать / написать</button></div><div class="field"><label class="field-label">Самое важное действие</label><textarea class="textarea compact" data-bind="daily:main" placeholder="Что сегодня реально сдвинет дело?">${h(d.main)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если сил мало, достаточно...</label><textarea class="textarea compact" data-bind="daily:fallback" placeholder="Самый маленький полезный шаг">${h(d.fallback)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если останутся силы</label><textarea class="textarea compact" data-bind="daily:extra" placeholder="Необязательное действие">${h(d.extra)}</textarea></div></section>`;
+    out+=`<div class="two-col"><div class="stack"><section class="panel"><div class="card-title"><div><h2>Мой план</h2><p>Не обязательно заполнять все поля.</p></div><button class="button sm" data-action="quick-capture">🎙 Сказать / написать</button></div><div class="field"><label class="field-label">Самое важное действие</label><textarea class="textarea compact" data-bind="daily:main" placeholder="Что сегодня реально сдвинет дело?">${h(d.main)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если сил мало, достаточно...</label><textarea class="textarea compact" data-bind="daily:fallback" placeholder="Самый маленький полезный шаг">${h(d.fallback)}</textarea></div><div class="field" style="margin-top:14px"><label class="field-label">Если останутся силы</label><textarea class="textarea compact" data-bind="daily:extra" placeholder="Необязательное действие">${h(d.extra)}</textarea></div>${dailySaveStatus()}</section>`;
     out+=`<section class="panel"><div class="card-title"><div><h3>Шаги, которые я выбрала на сегодня</h3><p>Список связан с твоими девятью результатами.</p></div></div>`;
     if(!tasklist.length)out+=`<p class="muted small" style="margin-bottom:12px">Здесь пока пусто. Добавь одну задачу из плана.</p>`;
     for(const t of tasklist)out+=`<div class="task-check"><input aria-label="Отметить готовым" type="checkbox" data-action="check-task" data-id="${attr(t.id)}" ${taskCompleted(t)?'checked':''}><div style="flex:1"><div class="task-title ${taskCompleted(t)?'done':''}">${h(t.title)}</div><div class="task-meta">${h(t.category)}${t.due?' · до '+niceShort(t.due):''}</div></div><button class="button ghost sm" data-action="remove-today-task" data-id="${attr(t.id)}" title="Убрать из сегодняшнего списка">×</button></div>`;
     if(options.length)out+=`<div class="field" style="margin-top:15px"><label class="field-label">Добавить из плана</label><select class="select" data-bind="add-today"><option value="">Выбрать шаг…</option>${options.map(t=>`<option value="${attr(t.id)}">${h(first(t.title,85))}</option>`).join('')}</select></div>`;
     else out+=`<div class="row-actions" style="margin-top:12px">${button('new-task','Добавить новую задачу','sm')}</div>`;
     out+='</section></div>';
-    out+=`<div class="stack"><section class="panel peach"><div class="card-title"><div><h3>Как я сегодня?</h3><p>Силы могут меняться. План учитывает это.</p></div></div><div class="segment">${[['мало','Мало'],['обычно','Обычно'],['много','Много']].map(([k,v])=>`<button data-action="energy" data-id="${k}" class="${d.energy===k?'active':''}">${v}</button>`).join('')}</div>${d.energy==='мало'?`<p class="small" style="margin-top:13px;color:#7e5849">Сегодня достаточно одного небольшого действия. Можно убрать всё необязательное.</p>`:''}<div class="field" style="margin-top:15px"><label class="field-label">Что сегодня будет для меня хорошим?</label><textarea class="textarea compact" data-bind="daily:care" placeholder="Прогулка, еда, отдых, разговор...">${h(d.care)}</textarea></div></section>`;
-    out+=`<section class="panel"><h3>В конце дня, если хочется</h3><p class="muted small" style="margin:8px 0 13px">Что получилось? Что стоит перенести? Без отчёта о продуктивности.</p><textarea class="textarea" data-bind="daily:note" placeholder="Можно оставить пустым">${h(d.note)}</textarea></section>`;
+    out+=`<div class="stack"><section class="panel peach"><div class="card-title"><div><h3>Как я сегодня?</h3><p>Силы могут меняться. План учитывает это.</p></div></div><div class="segment">${[['мало','Мало'],['обычно','Обычно'],['много','Много']].map(([k,v])=>`<button data-action="energy" data-id="${k}" class="${d.energy===k?'active':''}">${v}</button>`).join('')}</div>${d.energy==='мало'?`<p class="small" style="margin-top:13px;color:#7e5849">Сегодня достаточно одного небольшого действия. Можно убрать всё необязательное.</p>`:''}<div class="field" style="margin-top:15px"><label class="field-label">Что сегодня будет для меня хорошим?</label><textarea class="textarea compact" data-bind="daily:care" placeholder="Прогулка, еда, отдых, разговор...">${h(d.care)}</textarea></div>${dailySaveStatus()}</section>`;
+    out+=`<section class="panel"><h3>В конце дня, если хочется</h3><p class="muted small" style="margin:8px 0 13px">Что получилось? Что стоит перенести? Без отчёта о продуктивности.</p><textarea class="textarea" data-bind="daily:note" placeholder="Можно оставить пустым">${h(d.note)}</textarea>${dailySaveStatus()}</section>`;
     out+=`<section class="panel"><div class="eyebrow">РЕАЛЬНОЕ ДВИЖЕНИЕ</div><div class="kpi-value" style="margin-top:6px">${finished} <span class="small muted">из ${data.tasks.length} шагов</span></div><p class="muted small">Отмеченные завершённые действия. Это не процент успешности твоей жизни.</p><div style="margin-top:14px"><button class="button sm" data-action="tab" data-id="tasks">Все шаги ↗</button></div></section></div></div>`;
     return out;
   }
@@ -384,6 +419,14 @@
       if(!value)return;const k=today();let d=data.daily[k]||(data.daily[k]={energy:'обычно',main:'',fallback:'',extra:'',care:'',note:'',taskIds:[]});
       d.taskIds=Array.isArray(d.taskIds)?d.taskIds:[];if(!d.taskIds.includes(value))d.taskIds.push(value);markChange();return;
     }
+    if(type==='history-date'||type==='saved-day'){
+      if(validISO(value)&&value<=today()){selectedDailyDate=value;render()}
+      return;
+    }
+    if(type==='archive'){
+      const k=selectedDailyDate;if(!validISO(k)||k>=today())return;
+      const d=data.daily[k]||(data.daily[k]={energy:'обычно',taskIds:[]});d[p[1]]=value;markChange(false);return;
+    }
     if(type==='task-filter-goal'){goalFilter=value;render();return}
     if(type==='task-filter-project'){projectFilter=value;render();return}
     if(type==='daily'){
@@ -425,6 +468,15 @@
     }
     if(action==='tab'){view=id||'weeks';modal=null;render();window.scrollTo(0,0);return}
     if(action==='close-modal'||action==='close-overlay'){modal=null;render();return}
+    if(action==='prev-day'||action==='next-day'){
+      const d=dateLocal(selectedDailyDate);d.setDate(d.getDate()+(action==='prev-day'?-1:1));
+      const k=todayFromDate(d);if(k<=today()){selectedDailyDate=k;render()};return;
+    }
+    if(action==='go-today'){selectedDailyDate=today();render();return}
+    if(action==='archive-energy'){
+      const k=selectedDailyDate;if(!validISO(k)||k>=today())return;
+      const d=data.daily[k]||(data.daily[k]={energy:'обычно',taskIds:[]});d.energy=id;markChange();return;
+    }
     if(action==='prev-week'||action==='next-week'){let i=getWeekIndex()+(action==='prev-week'?-1:1);currentWeek=Math.max(0,Math.min(data.weeks.length-1,i));render();return}
     if(action==='current-week'){currentWeek=-1;render();return}
     if(action==='go-current-week'){currentWeek=-1;view='weeks';render();return}

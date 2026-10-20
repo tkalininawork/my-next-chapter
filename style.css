@@ -150,3 +150,28 @@ a:hover {color:#8e1f50;}
   .hero:after {font-size:108px;right:0;top:-14px;}
   .mobile-nav {box-shadow:0 -6px 20px rgba(7,26,59,.07);}
 }
+
+/* 3.3: история ежедневных записей и явный статус автосохранения. */
+.daily-save-status{display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:17px;padding:10px 12px;border-top:1px solid var(--line);font-size:12px;font-weight:650;color:var(--lp-ink)}
+.daily-save-status .sync-dot{margin-right:7px;flex:none}
+.daily-save-hint{font-weight:400;color:var(--muted)}
+.daily-history-nav{margin-bottom:17px;padding:18px 24px}
+.daily-history-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:13px}
+.daily-history-heading h3{font-size:19px;margin:5px 0 4px}
+.daily-history-controls{display:flex;align-items:end;gap:9px;flex-wrap:wrap}
+.daily-history-controls>.button{min-height:40px}
+.daily-date-field{display:grid;gap:5px;min-width:175px}
+.daily-date-field .input{width:100%;min-width:175px;height:40px}
+.daily-saved-select{display:flex;align-items:center;gap:12px;margin-top:13px;flex-wrap:wrap}
+.daily-saved-select .select{min-width:180px;max-width:320px}
+.daily-fields{display:grid;gap:15px}
+.daily-archive-note{margin-bottom:16px}
+@media(max-width:740px){
+ .daily-history-nav{padding:17px}
+ .daily-history-controls{display:grid;grid-template-columns:1fr 1fr}
+ .daily-date-field{grid-column:1 / -1;grid-row:1}
+ .daily-date-field .input{min-width:0}
+ .daily-history-controls>.button{width:100%}
+ .daily-saved-select{align-items:stretch;flex-direction:column;gap:5px}
+ .daily-saved-select .select{max-width:none}
+}
